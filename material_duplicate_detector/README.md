@@ -366,6 +366,36 @@ Gera `dist/DetectorDuplicidadeMateriais/` com o executável e os JSON de
 Inno Setup Compiler (ou `iscc packaging/installer.iss`) para gerar o
 instalador `.exe` em `packaging/output/`.
 
+### Levando o `.exe` para outra máquina sem compilar lá
+
+O modo `--onedir` gera uma **pasta**, não um arquivo único — o erro
+`Failed to load Python DLL` / `LoadLibrary... o módulo especificado não
+foi encontrado` ao rodar em outra máquina quase sempre significa que
+faltou algo nessa cópia. Checklist, na ordem mais provável:
+
+1. **Copie a pasta `dist\DetectorDuplicidadeMateriais\` inteira**, não
+   só o `.exe`. Ela inclui uma subpasta `_internal` com o `python3xx.dll`
+   e todas as dependências (`pandas`, `openpyxl`, Tkinter) — sem ela o
+   executável não tem como rodar. Copiar só o `.exe` é a causa mais
+   comum desse erro especificamente.
+2. Se copiou a pasta inteira e o erro persiste, **instale o Microsoft
+   Visual C++ Redistributable (x64)** na máquina de destino:
+   https://aka.ms/vs/17/release/vc_redist.x64.exe — o runtime do Python
+   depende dele e uma máquina "limpa" pode não tê-lo.
+3. Confira se o antivírus da máquina de destino não removeu/colocou em
+   quarentena algum arquivo de dentro de `_internal` durante a cópia
+   (isso quebra o bundle silenciosamente).
+4. A partir desta correção, `upx` foi desativado no `packaging/app.spec`
+   (`upx=False` no `EXE`/`COLLECT`): DLLs comprimidas com UPX podem
+   falhar em decodificar em certas combinações de Windows/antivírus,
+   gerando exatamente esse mesmo erro. Se você já tinha gerado um build
+   com uma versão anterior da spec (`upx=True`), gere um novo com
+   `pyinstaller packaging/app.spec` antes de testar em outra máquina.
+5. O caminho mais robusto para distribuir é o instalador do Inno Setup
+   (`packaging/installer.iss`, Sprint 12): ele empacota a pasta inteira
+   corretamente e evita o erro de "copiei só o `.exe`" por completo —
+   recomendado em vez de copiar a pasta manualmente.
+
 ## Limitações conhecidas
 
 - **GUI não testada visualmente em Windows real.** O ambiente Linux
