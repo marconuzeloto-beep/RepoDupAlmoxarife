@@ -111,6 +111,27 @@ class ResultsFrame(ttk.Frame):
         if not self._results:
             messagebox.showinfo("Exportar", "Nao ha resultados para exportar.")
             return
+
+        # Exporta apenas os resultados atualmente visiveis (respeitando o
+        # filtro de classificacao e a busca), nao todos os pares — assim
+        # o usuario controla o tamanho do arquivo filtrando antes de
+        # exportar (ex.: so DUPLICADO_CONFIRMADO/PROVAVEL_DUPLICADO).
+        results_to_export = [self._results[i] for i in self._visible_indices]
+        if not results_to_export:
+            messagebox.showinfo("Exportar", "Nenhum resultado visivel com o filtro/busca atuais.")
+            return
+
+        if len(results_to_export) > 200_000:
+            proceed = messagebox.askyesno(
+                "Exportar muitos resultados",
+                f"Ha {len(results_to_export)} pares visiveis — um volume muito grande para "
+                "revisao manual em Excel. Considere filtrar por Classificacao (ex.: apenas "
+                "DUPLICADO_CONFIRMADO e PROVAVEL_DUPLICADO) antes de exportar.\n\n"
+                "Deseja exportar mesmo assim?",
+            )
+            if not proceed:
+                return
+
         output_path = filedialog.asksaveasfilename(
             title="Exportar resultados",
             defaultextension=".xlsx",
@@ -118,8 +139,13 @@ class ResultsFrame(ttk.Frame):
         )
         if not output_path:
             return
-        sheet_names = export_results_to_excel(self._results, output_path)
-        message = f"{len(self._results)} resultados exportados para:\n{output_path}"
+        sheet_names = export_results_to_excel(results_to_export, output_path)
+        message = f"{len(results_to_export)} resultados exportados para:\n{output_path}"
+        if len(results_to_export) < len(self._results):
+            message += (
+                f"\n\n(Filtro/busca aplicados: {len(self._results) - len(results_to_export)} "
+                "pares nao visiveis nao foram exportados.)"
+            )
         if len(sheet_names) > 1:
             message += (
                 f"\n\nO arquivo tem {len(sheet_names)} planilhas ({', '.join(sheet_names)}) "

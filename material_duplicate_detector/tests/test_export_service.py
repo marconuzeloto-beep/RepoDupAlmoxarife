@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import openpyxl
 import pandas as pd
 
 from app.models.comparison_result import ComparisonResult
@@ -87,3 +88,33 @@ def test_export_splits_across_multiple_sheets_when_exceeding_row_limit(tmp_path)
         assert len(df) <= 9
         total_rows += len(df)
     assert total_rows == 25
+
+
+def test_export_large_volume_streams_without_loading_everything_in_memory(tmp_path):
+    # Regressao: exportar centenas de milhares de pares causava
+    # MemoryError porque pandas/openpyxl (modo normal) mantem toda
+    # celula como objeto Python em memoria antes de escrever. Usa modo
+    # "write_only" do openpyxl (streaming). 50.000 e grande o suficiente
+    # para exercitar o caminho de escrita real sem deixar o teste lento
+    # (o volume de milhoes de linhas foi validado manualmente).
+    results = (
+        ComparisonResult(
+            code_a=str(i),
+            code_b=str(i + 1),
+            text_a="PARAFUSO A",
+            text_b="PARAFUSO B",
+            classification="SEMELHANTE_DIFERENTE",
+            confidence=0.5,
+        )
+        for i in range(50_000)
+    )
+    output_path = tmp_path / "resultados_volume.xlsx"
+
+    sheet_names = export_results_to_excel(results, output_path)
+    assert sheet_names == ["Resultados"]
+
+    workbook = openpyxl.load_workbook(output_path, read_only=True)
+    worksheet = workbook["Resultados"]
+    row_count = sum(1 for _ in worksheet.iter_rows())
+    assert row_count == 50_001  # +1 do cabecalho
+    workbook.close()

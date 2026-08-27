@@ -1,10 +1,17 @@
-"""Exportacao dos resultados para Excel (Sprint 9)."""
+"""Exportacao dos resultados para Excel (Sprint 9).
+
+Escreve com ``openpyxl`` no modo ``write_only`` (streaming): cada linha
+e serializada e descartada da memoria assim que e escrita, em vez de
+manter todas as celulas da planilha como objetos Python (o que e o que
+``pandas.DataFrame.to_excel``/``openpyxl`` no modo normal fazem, e o
+que causava ``MemoryError`` ao exportar centenas de milhares de pares).
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
+from openpyxl import Workbook
 
 from app.models.comparison_result import ComparisonResult
 
@@ -24,11 +31,8 @@ _COLUMNS = [
 ]
 
 # Limite real do Excel (.xlsx): 1.048.576 linhas por planilha, contando
-# o cabecalho. Quando o numero de resultados ultrapassa isso, o pandas
-# lanca ValueError ("This sheet is too large!") — em bases muito
-# grandes/com muitos termos em comum, o numero de pares candidatos pode
-# passar de um milhao. Em vez de falhar, os resultados sao divididos em
-# varias planilhas dentro do mesmo arquivo.
+# o cabecalho. Quando o numero de resultados ultrapassa isso, os dados
+# sao divididos em varias planilhas dentro do mesmo arquivo.
 _EXCEL_MAX_ROWS_PER_SHEET = 1_048_576
 
 
@@ -37,40 +41,51 @@ def export_results_to_excel(
     output_path: str | Path,
     max_rows_per_sheet: int = _EXCEL_MAX_ROWS_PER_SHEET,
 ) -> list[str]:
-    """Exporta os resultados para ``output_path``.
+    """Exporta ``results`` para ``output_path`` em modo streaming.
 
     Se ``results`` tiver mais linhas do que uma planilha do Excel
     suporta, os dados sao divididos automaticamente em varias planilhas
     ("Resultados", "Resultados_2", ...) dentro do mesmo arquivo, em vez
     de falhar. Retorna a lista de nomes de planilhas criadas.
     """
-    rows = [_result_to_row(r) for r in results]
     max_data_rows = max(1, max_rows_per_sheet - 1)  # a linha 1 e o cabecalho
 
+    workbook = Workbook(write_only=True)
     sheet_names: list[str] = []
-    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-        chunks = [rows[i : i + max_data_rows] for i in range(0, len(rows), max_data_rows)] or [[]]
-        for index, chunk in enumerate(chunks, start=1):
-            sheet_name = "Resultados" if index == 1 else f"Resultados_{index}"
-            df = pd.DataFrame(chunk, columns=_COLUMNS)
-            df.to_excel(writer, index=False, sheet_name=sheet_name)
-            sheet_names.append(sheet_name)
 
+    def start_sheet():
+        sheet_index = len(sheet_names) + 1
+        name = "Resultados" if sheet_index == 1 else f"Resultados_{sheet_index}"
+        sheet_names.append(name)
+        worksheet = workbook.create_sheet(title=name)
+        worksheet.append(_COLUMNS)
+        return worksheet
+
+    current_sheet = start_sheet()
+    rows_in_current_sheet = 0
+    for result in results:
+        if rows_in_current_sheet >= max_data_rows:
+            current_sheet = start_sheet()
+            rows_in_current_sheet = 0
+        current_sheet.append(_result_to_row(result))
+        rows_in_current_sheet += 1
+
+    workbook.save(output_path)
     return sheet_names
 
 
-def _result_to_row(r: ComparisonResult) -> dict:
-    return {
-        "Codigo A": r.code_a,
-        "Codigo B": r.code_b,
-        "Texto A": r.text_a,
-        "Texto B": r.text_b,
-        "Classificacao": r.classification,
-        "Confianca": r.confidence,
-        "Elementos Tecnicos Iguais": "; ".join(r.equal_elements),
-        "Diferencas de Formatacao": "; ".join(r.formatting_differences),
-        "Diferencas Tecnicas": "; ".join(r.technical_differences),
-        "Termos Ambiguos": "; ".join(r.ambiguous_differences),
-        "Status de Revisao": r.review_status,
-        "Observacao": r.observation,
-    }
+def _result_to_row(r: ComparisonResult) -> list:
+    return [
+        r.code_a,
+        r.code_b,
+        r.text_a,
+        r.text_b,
+        r.classification,
+        r.confidence,
+        "; ".join(r.equal_elements),
+        "; ".join(r.formatting_differences),
+        "; ".join(r.technical_differences),
+        "; ".join(r.ambiguous_differences),
+        r.review_status,
+        r.observation,
+    ]
