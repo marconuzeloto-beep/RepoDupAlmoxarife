@@ -9,8 +9,16 @@ Classification = Literal["DUPLICADO_CONFIRMADO", "PROVAVEL_DUPLICADO", "SEMELHAN
 ReviewStatus = Literal["PENDENTE", "APROVADO", "REJEITADO"]
 
 
-@dataclass(frozen=True)
+@dataclass
 class ComparisonResult:
+    """Resultado explicavel de uma comparacao entre dois materiais.
+
+    Diferente de ``Material``/``ParsedMaterial`` (que preservam o texto
+    original e nunca mudam), este objeto representa um item de trabalho
+    de revisao: ``review_status`` e ``observation`` sao alterados pelo
+    usuario ao revisar o par na interface (Sprint 9).
+    """
+
     code_a: str
     code_b: str
     text_a: str
