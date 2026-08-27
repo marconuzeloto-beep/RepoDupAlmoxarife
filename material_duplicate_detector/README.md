@@ -1,0 +1,326 @@
+# Detector de Duplicidade de Materiais
+
+Aplicação desktop em Python para identificar materiais possivelmente
+duplicados em planilhas Excel, com foco no campo **"Texto Dados Básicos"**,
+por meio de análise técnica explicável (não apenas similaridade textual).
+
+Este documento é o entregável da **Sprint 0 — Planejamento e Arquitetura**.
+Nenhuma lógica de negócio foi implementada ainda: apenas a estrutura de
+diretórios, os módulos vazios (com docstring indicando responsabilidade e
+sprint de implementação), os arquivos de configuração iniciais e este plano.
+
+---
+
+## 1. Arquitetura Final Proposta
+
+Aplicação desktop monolítica (um processo), organizada em camadas
+independentes e testáveis, sem framework web e sem serviços externos:
+
+```
+GUI (Tkinter/ttk)
+   │  (chama, nunca é chamada por)
+   ▼
+Services (orquestração: excel, análise, export)
+   │
+   ▼
+Core (normalizer → tokenizer → technical_parser → signature_builder
+      → candidate_generator → comparator → classifier)
+   │
+   ├── Indexes (inverted_index, signature_index, trie)
+   ├── Rules (rule_loader + JSON em /config)
+   └── Models (dataclasses imutáveis que atravessam o pipeline)
+```
+
+Princípios:
+
+- **Separação estrita entre GUI e lógica de negócio.** A GUI nunca contém
+  regra de negócio; ela chama `services`, que chama `core`. Isso permite
+  testar 100% do `core` e do `services` sem abrir uma janela.
+- **Pipeline em estágios, cada um com saída própria e auditável.** Nenhum
+  estágio sobrescreve a saída do estágio anterior — tudo fica disponível em
+  `ParsedMaterial` (ver seção 4) para explicação e auditoria.
+- **Regras fora do código.** Abreviações, equivalências, termos críticos e
+  símbolos protegidos vivem em JSON (`/config`), carregados por
+  `rule_loader`, nunca hardcoded em `core`.
+- **Geração de candidatos separada da comparação profunda.** Índices
+  (Hash Map / índice invertido) evitam comparação O(n²); só pares
+  candidatos plausíveis chegam ao comparador profundo.
+- **Decisão final baseada em regras explícitas, não em score único.**
+  Similaridade textual é só um sinal auxiliar, nunca o critério de decisão
+  (ver seção 8).
+- **Processamento fora da thread de UI**, comunicando-se por fila
+  (`queue.Queue`) para manter a interface responsiva.
+
+## 2. Bibliotecas Recomendadas
+
+| Necessidade | Biblioteca | Justificativa |
+|---|---|---|
+| Leitura/escrita de Excel | `pandas` + `openpyxl` | Padrão de mercado, robusto para múltiplas abas, tipos mistos e exportação `.xlsx`. |
+| Interface gráfica | `tkinter` + `ttk` (stdlib) | Já vem com o Python, estável, empacota bem com PyInstaller, sem dependências binárias extras. |
+| Testes | `pytest` | Padrão, fixtures simples, boa granularidade para os muitos casos técnicos exigidos. |
+| Empacotamento Windows | `PyInstaller` | Gera `.exe` standalone sem exigir Python no computador do usuário. |
+| Instalador | `Inno Setup` | Gratuito, amplamente usado para apps Windows, script declarativo simples. |
+| Números/frações | `re` + `fractions.Fraction` (stdlib) | Suficiente para parsing de frações/decimais sem dependência extra. |
+
+Não serão usadas bibliotecas de NLP/embeddings nesta fase (ver seção 8) —
+mantém o executável pequeno e o comportamento 100% explicável.
+
+## 3. Estrutura de Diretórios
+
+```
+material_duplicate_detector/
+├── app/
+│   ├── main.py
+│   ├── gui/            (main_window, import_view, analysis_view, results_view, settings_view)
+│   ├── core/            (normalizer, tokenizer, technical_parser, signature_builder,
+│   │                     candidate_generator, comparator, classifier)
+│   ├── indexes/         (inverted_index, signature_index, trie)
+│   ├── rules/            (rule_loader, abbreviations, equivalents, critical_terms, protected_symbols)
+│   ├── services/         (excel_service, analysis_service, export_service)
+│   └── models/           (material, parsed_material, technical_signature, comparison_result)
+├── config/               (abbreviations.json, equivalents.json, critical_terms.json, protected_symbols.json)
+├── tests/                (um arquivo de teste por módulo do core/indexes)
+├── requirements.txt
+├── README.md
+└── build/                (saída do PyInstaller — não versionado)
+```
+
+Já criada nesta Sprint, com módulos vazios (apenas docstring dizendo o que
+farão e em qual sprint serão implementados) e os JSON de `/config` com uma
+estrutura inicial mínima e comentada.
+
+## 4. Modelos de Dados (visão geral — implementados na Sprint 2/5/6)
+
+```python
+@dataclass(frozen=True)
+class Material:
+    row_index: int
+    code: str
+    raw_fields: dict[str, str]      # todas as colunas originais da linha
+    analysis_text: str              # valor original da coluna escolhida p/ análise
+
+@dataclass(frozen=True)
+class ParsedMaterial:
+    material: Material
+    original_text: str              # nunca alterado
+    normalized_text: str
+    raw_tokens: list[str]
+    technical_tokens: list[str]
+    critical_tokens: list[str]
+    numbers: list[Number]           # inteiros, decimais, frações, mistos
+    units: list[UnitMeasure]        # valor + unidade (ex: "20 CM")
+    symbols: list[str]              # símbolos técnicos preservados
+    normalized_terms: list[str]     # após abreviação/equivalência
+
+@dataclass(frozen=True)
+class TechnicalSignature:
+    normalized_signature: str
+    token_signature: str
+    numeric_signature: str
+    unit_signature: str
+    critical_terms_signature: str
+    ordered_signature: str
+    unordered_signature: str        # ex: frozenset ordenável p/ hashing
+
+@dataclass(frozen=True)
+class ComparisonResult:
+    material_a: Material
+    material_b: Material
+    classification: Literal["DUPLICADO_CONFIRMADO", "PROVAVEL_DUPLICADO", "SEMELHANTE_DIFERENTE"]
+    confidence: float               # sinal auxiliar, não decisório
+    equal_elements: list[str]
+    formatting_differences: list[str]
+    technical_differences: list[str]
+    ambiguous: bool
+    review_status: Literal["PENDENTE", "APROVADO", "REJEITADO"]
+```
+
+`Material` e `ParsedMaterial` são imutáveis (`frozen=True`): o texto
+original nunca é sobrescrito em nenhum ponto do pipeline — cada
+transformação produz um novo campo, preservando a cadeia completa para
+auditoria (ver seção 6 do prompt: "Explicação obrigatória do resultado").
+
+## 5. Múltiplas Representações do Texto
+
+Conforme exigido, cada material carrega simultaneamente (nenhuma substitui
+a anterior):
+
+1. Texto original
+2. Texto normalizado (maiúsculas, espaços, acentuação segura, separadores)
+3. Tokens brutos
+4. Tokens técnicos (após remover ruído não técnico)
+5. Tokens críticos (termos que nunca podem divergir sem virar "diferente")
+6. Números extraídos (inteiro/decimal/fração/misto, com posição)
+7. Unidades extraídas (valor + unidade, ex.: `20 CM`, `1/2 MM`)
+8. Símbolos técnicos relevantes (protegidos por `protected_symbols.json`)
+9. Termos normalizados (após abreviação/equivalência configurável)
+10. Assinatura técnica (múltiplas — seção 4)
+11. Chaves auxiliares para geração de candidatos (derivadas das
+    assinaturas, usadas como chave no índice invertido)
+
+## 6. Fluxo Completo de Processamento
+
+```
+Excel → Leitura (excel_service)
+      → Material (1 por linha)
+      → normalizer            → texto normalizado
+      → tokenizer              → tokens brutos/técnicos + números/unidades/símbolos
+      → rule_loader (rules)    → termos normalizados (abreviação/equivalência)
+      → technical_parser       → estrutura semântica (medida, separador, medida...)
+      → signature_builder      → múltiplas assinaturas
+      → inverted_index +
+        signature_index +
+        trie (auxiliar)        → índices para geração de candidatos
+      → candidate_generator    → pares candidatos (não todos-contra-todos)
+      → comparator              → diferenças por categoria (números, unidades,
+                                   termos, símbolos, ordem)
+      → classifier               → DUPLICADO_CONFIRMADO / PROVAVEL_DUPLICADO /
+                                    SEMELHANTE_DIFERENTE
+      → ComparisonResult (explicável) → GUI / export_service → Excel
+```
+
+O pipeline roda em uma thread de trabalho (`analysis_service`), publicando
+progresso em uma `queue.Queue` consumida pela GUI via `after()` do Tk, para
+nunca bloquear a interface.
+
+## 7. Estratégia de Geração de Candidatos
+
+Para evitar O(n²) em 5.000–20.000 registros:
+
+- **Índice invertido** termo técnico → lista de materiais (ex.: `PARAFUSO`,
+  `M10`, `INOX`), construído uma vez sobre os tokens técnicos.
+- **Índice por assinatura** (Hash Map) para as assinaturas normalizada,
+  numérica, de unidades e não-ordenada — materiais com a mesma assinatura
+  (ou assinaturas com interseção relevante) viram candidatos diretos.
+- **União dos conjuntos de candidatos** de cada índice, com deduplicação de
+  pares (A,B) == (B,A).
+- **Trie auxiliar** apoia o reconhecimento de abreviações/termos colados
+  durante a tokenização (não decide duplicidade, apenas alimenta os
+  índices acima com termos corretamente segmentados).
+- Materiais sem nenhuma interseção de termo/assinatura relevante nunca são
+  comparados profundamente — corta o grosso das combinações irrelevantes.
+
+## 8. Estratégia de Comparação Técnica
+
+O comparador nunca decide por uma única métrica de similaridade. Para cada
+par candidato, ele produz comparações independentes por categoria:
+
+- **Números**: mesma quantidade e mesmos valores (inteiros/decimais/frações
+  tratados por valor equivalente: `1/2` == `0.5`), preservando a unidade
+  associada.
+- **Unidades**: mesma unidade após normalização segura de agrupamento
+  (`20CM` ≡ `20 CM`), mas `1/2"` ≠ `1/2` (símbolo protegido altera
+  interpretação).
+- **Termos críticos**: qualquer divergência aqui (ex.: `DIANTEIRO` vs
+  `TRASEIRO`, `AZUL` vs `PRETO`) força classificação "diferente" ou
+  "semelhante, mas diferente", independente da similaridade textual.
+- **Termos normalizados/abreviações**: aplicação das equivalências
+  configuráveis antes de comparar (`DIANT` ≡ `DIANTEIRO`).
+- **Símbolos técnicos protegidos**: comparados literalmente; sua ausência/
+  presença é reportada como diferença técnica potencial, não ignorada.
+- **Ordem dos elementos**: comparação com e sem ordenação (assinatura
+  ordenada vs não-ordenada) para tratar `PARAFUSO INOX M10 X 20` ≡
+  `PARAFUSO M10X20 AÇO INOX`.
+- **Similaridade textual** (ex.: razão de tokens em comum) é calculada e
+  exposta apenas como `confidence` auxiliar — nunca é o campo usado pelo
+  `classifier` para decidir a categoria.
+
+O `classifier` combina os resultados por categoria em regras explícitas
+(não em um único score) para chegar a `DUPLICADO_CONFIRMADO`,
+`PROVAVEL_DUPLICADO` ou `SEMELHANTE_DIFERENTE`, sempre anexando as listas
+de semelhanças, diferenças de formatação e diferenças técnicas usadas na
+decisão (requisito de explicabilidade).
+
+Embeddings/similaridade semântica ficam fora do escopo atual; poderão ser
+avaliados futuramente apenas como fonte adicional de candidatos, nunca como
+mecanismo de confirmação.
+
+## 9. Estratégia de Testes
+
+- Um arquivo de teste por módulo central (`tests/test_*.py`), criado desde
+  já como placeholder, implementado junto com o módulo correspondente em
+  cada sprint — nenhuma sprint é considerada concluída sem seus testes.
+- Casos obrigatórios do prompt (`20 CM X 1/2 MM` ≡ `20CMX1/2MM`;
+  `1/2"` ≠ `1/2`; `M10` ≠ `M12`; `DIANT` ≡ `DIANTEIRO`; `DIANTEIRO` ≠
+  `TRASEIRO`; `MASCULINO` ≠ `FEMININO`; `AZUL` ≠ `PRETO`) serão codificados
+  como testes parametrizados de regressão, reexecutados a cada sprint que
+  tocar `core/`.
+- Testes de índice/candidatos incluirão um teste de "não explosão
+  combinatória" (nº de comparações profundas << n²) em um dataset sintético
+  de alguns milhares de registros.
+- Teste de integração ponta a ponta (Sprint 10) com planilhas sintéticas
+  representando os casos acima, cobrindo importação → classificação →
+  exportação.
+- `pytest` como runner único; sem mocks de GUI — a lógica é testada 100%
+  fora do Tkinter.
+
+## 10. Estratégia de Desempenho
+
+Ordem de prioridade conforme o prompt: **precisão > explicabilidade >
+eficiência > velocidade**.
+
+- Custo evitado por construção (índices em vez de todos-contra-todos), não
+  por paralelismo ou otimização prematura.
+- Estruturas em memória (Hash Maps, listas) — sem banco de dados; dataset
+  alvo (5.000–20.000 linhas) cabe confortavelmente em RAM.
+- Métricas coletadas e exibidas ao usuário: tempo de importação, tempo de
+  processamento, nº de candidatos gerados, nº de comparações profundas
+  executadas e, quando disponível via `resource`/`tracemalloc`, memória
+  utilizada — tudo reportado ao final da análise (Sprint 8/9).
+- Nenhuma meta de tempo real "duro" é imposta; "tempo razoável em
+  computador comum" é validado empiricamente na Sprint 10 com planilhas
+  reais/sintéticas de diferentes tamanhos.
+
+## 11. Estratégia de Empacotamento para Windows
+
+- **PyInstaller** (`--onefile` ou `--onedir` — decisão final na Sprint 11
+  após medir tempo de start e falsos positivos de antivírus, que costumam
+  ser menores em `--onedir`) gerando um `.exe` standalone, sem exigir
+  Python nem `pip install` na máquina do usuário.
+- Bundle inclui os JSON de `/config` como dados (`--add-data`), lidos em
+  runtime por caminho relativo ao executável (resolvido via
+  `sys._MEIPASS` quando empacotado).
+- **Inno Setup** para gerar um instalador `.exe` que copia os arquivos,
+  cria atalho no menu iniciar/desktop e não requer terminal nem comandos
+  do usuário final.
+- Validação final (Sprint 13) inclui rodar o instalador e o executável em
+  uma máquina Windows sem Python instalado.
+
+## 12. Plano de Desenvolvimento (Sprints)
+
+| Sprint | Entrega |
+|---|---|
+| 0 | Planejamento e arquitetura (este documento) |
+| 1 | Importação de Excel (arquivo, abas, colunas) |
+| 2 | Modelos de dados e normalização segura |
+| 3 | Tokenizador técnico |
+| 4 | Regras e equivalências (JSON externo) |
+| 5 | Assinaturas técnicas e índices (candidatos) |
+| 6 | Comparador técnico profundo e explicável |
+| 7 | Classificação (duplicado/provável/semelhante) |
+| 8 | Interface: importação, configuração, execução, progresso |
+| 9 | Interface de resultados, filtros e exportação Excel |
+| 10 | Testes com planilhas reais/sintéticas em volume |
+| 11 | Empacotamento com PyInstaller |
+| 12 | Instalador (Inno Setup) e distribuição |
+| 13 | Teste final completo (unitário, integração, desempenho, executável) |
+
+Cada sprint só é iniciada após aprovação explícita da sprint anterior.
+
+---
+
+## Status Atual
+
+- [x] Sprint 0 — Planejamento e Arquitetura (este documento + estrutura
+      inicial de pastas, módulos vazios e JSON de configuração)
+- [ ] Sprint 1 — Importação de Excel (aguardando aprovação para iniciar)
+
+## Como executar os testes (a partir da Sprint 1)
+
+```bash
+pip install -r requirements.txt
+pytest
+```
+
+Ainda não há testes com asserções reais nesta sprint — os arquivos em
+`tests/` são placeholders que serão preenchidos junto com cada módulo.
