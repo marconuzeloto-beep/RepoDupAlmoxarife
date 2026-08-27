@@ -92,8 +92,21 @@ def extract_words(tokens: list[Token]) -> list[str]:
 
 
 def numeric_value(token_value: str) -> float:
-    """Converte um valor numerico de token (inteiro/decimal/fracao) em float."""
+    """Converte um valor numerico de token (inteiro/decimal/fracao) em float.
+
+    Alguns tokens no formato N/D nao sao fracoes matematicas de verdade,
+    e sim codigos/bitolas tecnicas com denominador zero (ex.: cabo/fio
+    "1/0 AWG", "2/0", "4/0" — notacao real e comum em materiais
+    eletricos). Nesses casos a divisao e indefinida; em vez de propagar
+    ZeroDivisionError e derrubar a analise inteira, o numerador e usado
+    como valor de referencia — o token continua distinto de outros (via
+    o texto original preservado e o token_signature), apenas o valor
+    numerico auxiliar nao pode ser calculado por divisao.
+    """
     if "/" in token_value:
         numerator, denominator = token_value.split("/", 1)
-        return float(numerator) / float(denominator)
+        denominator_value = float(denominator)
+        if denominator_value == 0:
+            return float(numerator)
+        return float(numerator) / denominator_value
     return float(token_value.replace(",", "."))

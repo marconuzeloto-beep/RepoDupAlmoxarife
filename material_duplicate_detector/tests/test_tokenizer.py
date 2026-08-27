@@ -59,3 +59,19 @@ def test_numeric_value_handles_fraction_and_decimal():
 
 def test_tokenize_empty_text():
     assert tokenize("") == []
+
+
+def test_numeric_value_zero_denominator_does_not_raise():
+    # "N/0" nao e uma fracao matematica valida, mas e uma notacao real
+    # de bitola de cabo/fio (ex.: cabo "1/0 AWG", "2/0", "4/0"). Nao
+    # pode derrubar a analise com ZeroDivisionError.
+    assert numeric_value("1/0") == 1.0
+    assert numeric_value("2/0") == 2.0
+    assert numeric_value("0/0") == 0.0
+
+
+def test_tokenize_cable_gauge_with_zero_denominator():
+    # Reproduz o texto real que causava "float division by zero" ao
+    # rodar a analise (bitola de cabo, ex.: "1/0 AWG").
+    tokens = _tokenize_raw("CABO 1/0 AWG")
+    assert extract_numbers(tokens) == ["1/0"]

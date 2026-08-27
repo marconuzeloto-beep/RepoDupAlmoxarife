@@ -56,6 +56,16 @@ def test_fraction_and_decimal_share_numeric_signature(rules):
     assert a.numeric_signature == b.numeric_signature == "0.5"
 
 
+def test_build_signature_does_not_crash_on_zero_denominator_gauge(rules):
+    # Regressao: texto real com bitola de cabo ("1/0 AWG") derrubava a
+    # analise inteira com ZeroDivisionError ao montar a assinatura numerica.
+    signature_a = build_signature(_parse("CABO 1/0 AWG", rules))
+    signature_b = build_signature(_parse("CABO 2/0 AWG", rules))
+    assert signature_a.numeric_signature == "1"
+    assert signature_b.numeric_signature == "2"
+    assert signature_a.numeric_signature != signature_b.numeric_signature
+
+
 def test_m10_and_m12_have_different_signatures(rules):
     a = build_signature(_parse("PARAFUSO M10", rules))
     b = build_signature(_parse("PARAFUSO M12", rules))
