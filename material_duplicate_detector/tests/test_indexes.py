@@ -71,6 +71,19 @@ def test_generate_candidate_pairs_basic(rules):
     assert (1, 2) not in pairs
 
 
+def test_generate_candidate_pairs_finds_large_group_of_identical_duplicates(rules):
+    # Regressao: um grupo grande de materiais IDENTICOS compartilha
+    # apenas termos muito comuns e pode ultrapassar o limite de
+    # frequencia dos indices — o pior cenario possivel, pois sao os
+    # duplicados mais obvios. O agrupamento por texto exato (sem limite)
+    # deve garantir que nenhum deles fique de fora.
+    parsed = _parsed(["PARAFUSO INOX PADRAO"] * 500, rules)
+    signatures = [build_signature(p) for p in parsed]
+    pairs = generate_candidate_pairs(parsed, signatures)
+    covered_positions = {p for pair in pairs for p in pair}
+    assert covered_positions == set(range(500))
+
+
 def test_generate_candidate_pairs_avoids_full_cartesian_explosion(rules):
     # 500 materiais em 50 grupos distintos (10 materiais por grupo, com
     # pequenas variacoes de formatacao). O numero de pares candidatos deve
