@@ -311,16 +311,91 @@ Cada sprint só é iniciada após aprovação explícita da sprint anterior.
 
 ## Status Atual
 
-- [x] Sprint 0 — Planejamento e Arquitetura (este documento + estrutura
-      inicial de pastas, módulos vazios e JSON de configuração)
-- [ ] Sprint 1 — Importação de Excel (aguardando aprovação para iniciar)
+- [x] Sprint 0 — Planejamento e Arquitetura
+- [x] Sprint 1 — Importação de Excel (`excel_service`)
+- [x] Sprint 2 — Modelos de dados e normalização segura (`normalizer`)
+- [x] Sprint 3 — Tokenizador técnico (`tokenizer`)
+- [x] Sprint 4 — Regras e equivalências configuráveis via JSON (`rule_loader`)
+- [x] Sprint 5 — Assinaturas técnicas e índices de candidatos
+      (`signature_builder`, `inverted_index`, `signature_index`, `trie`,
+      `candidate_generator`)
+- [x] Sprint 6 — Comparador técnico profundo e explicável (`comparator`)
+- [x] Sprint 7 — Classificação (`classifier`)
+- [x] Sprint 8 — Interface: importação, configuração, execução, progresso
+      (`main_window`, `import_view`, `analysis_view`, `analysis_service`)
+- [x] Sprint 9 — Resultados, filtros, detalhe do par e exportação Excel
+      (`results_view`, `export_service`)
+- [x] Sprint 10 — Testes com planilhas sintéticas em volume (até 20.000
+      registros) — encontrou e corrigiu um bug real de desempenho
+      (explosão combinatória no índice de assinaturas) e um bug real de
+      cobertura (grupos grandes de duplicados idênticos podiam ficar de
+      fora dos candidatos)
+- [x] Sprint 11 — Empacotamento com PyInstaller (`packaging/app.spec`)
+- [x] Sprint 12 — Instalador Inno Setup (`packaging/installer.iss`)
+- [x] Sprint 13 — Teste final e relatório de limitações conhecidas
 
-## Como executar os testes (a partir da Sprint 1)
+## Como executar os testes
 
 ```bash
 pip install -r requirements.txt
 pytest
 ```
 
-Ainda não há testes com asserções reais nesta sprint — os arquivos em
-`tests/` são placeholders que serão preenchidos junto com cada módulo.
+69 testes automatizados cobrindo normalização, tokenização, regras,
+assinaturas/índices (incluindo testes de eficiência), comparador,
+classificador, importação/exportação de Excel, orquestração em thread e
+dois testes de integração ponta a ponta (planilha com todos os casos
+obrigatórios do escopo + planilha sintética de 5.000 registros).
+
+## Como executar a aplicação (requer Tkinter — ver Limitações)
+
+```bash
+python -m app.main
+```
+
+## Como gerar o executável Windows (Sprint 11/12)
+
+Em uma máquina Windows com o `requirements.txt` instalado:
+
+```bash
+pyinstaller packaging/app.spec
+```
+
+Gera `dist/DetectorDuplicidadeMateriais/` com o executável e os JSON de
+`config/` empacotados. Em seguida, compile `packaging/installer.iss` no
+Inno Setup Compiler (ou `iscc packaging/installer.iss`) para gerar o
+instalador `.exe` em `packaging/output/`.
+
+## Limitações conhecidas
+
+- **GUI não testada visualmente em Windows real.** O ambiente Linux
+  deste projeto não tem Tkinter disponível para o interpretador Python
+  usado pelo `pytest` (por isso não há testes automatizados de GUI na
+  suíte). A interface foi validada com um smoke test end-to-end headless
+  (Xvfb + Tkinter do Python de sistema): abrir planilha, selecionar
+  colunas, rodar a análise em thread, carregar resultados na tabela e
+  abrir o diálogo de detalhe — tudo funcionou sem erros. Isso confirma
+  que o código da GUI é estruturalmente correto, mas o teste manual em
+  Windows (aparência, atalhos de teclado, comportamento de diálogos
+  nativos) ainda precisa ser feito por um usuário em máquina real.
+- **`.exe` Windows não gerado nem testado neste ambiente.** PyInstaller
+  não faz cross-compilation: rodar `pyinstaller packaging/app.spec`
+  neste container Linux gera um binário Linux, não um `.exe` Windows.
+  A spec foi validada localmente (build Linux completo, sem erros,
+  aceitando os hidden imports `pandas`/`openpyxl` e embutindo `config/`)
+  mas o `.exe` real, o instalador Inno Setup e a execução em um Windows
+  sem Python instalado (o requisito final do projeto) precisam ser
+  gerados e testados em uma máquina Windows.
+- **Índices priorizam eficiência sobre recall total em casos extremos.**
+  Para evitar explosão combinatória, `InvertedIndex` e `SignatureIndex`
+  ignoram termos/assinaturas presentes em mais de ~5% dos materiais
+  (mínimo 20). Duplicados exatos (mesmo texto normalizado) sempre são
+  encontrados via um agrupamento dedicado sem esse limite (Sprint 10),
+  mas duplicados quase-idênticos (ex.: só a formatação difere) que
+  dependam apenas de termos muito genéricos em bases muito grandes e
+  homogêneas podem, em tese, escapar dessa varredura. Não foi observado
+  em nenhum teste realizado (até 20.000 registros), mas é uma limitação
+  arquitetural a ter em mente.
+- **Não há tela de configuração de regras (`settings_view`) nem edição
+  de abreviações/equivalências pela interface.** As regras (Sprint 4)
+  só podem ser editadas diretamente nos arquivos `config/*.json`.
