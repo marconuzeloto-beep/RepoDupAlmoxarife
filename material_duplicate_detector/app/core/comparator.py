@@ -9,11 +9,14 @@ como criterio de decisao.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
 from app.models.parsed_material import ParsedMaterial
 from app.rules.rule_loader import RuleSet
+
+_CODE_LIKE_TERM = re.compile(r"^[A-ZÀ-Ú]+\d+[A-Z0-9]*$")
 
 _FORMATTING_LABELS: dict[str, str] = {
     "espacos_nas_bordas": "espacos nas bordas",
@@ -32,6 +35,7 @@ class ComparisonOutcome:
     equal_elements: list[str] = field(default_factory=list)
     formatting_differences: list[str] = field(default_factory=list)
     technical_differences: list[str] = field(default_factory=list)
+    ambiguous_differences: list[str] = field(default_factory=list)
     order_differs_only: bool = False
     ambiguous: bool = False
     textual_similarity: float = 0.0
@@ -44,6 +48,7 @@ class ComparisonOutcome:
 def compare(parsed_a: ParsedMaterial, parsed_b: ParsedMaterial, rules: RuleSet) -> ComparisonOutcome:
     equal_elements: list[str] = []
     technical_differences: list[str] = []
+    ambiguous_differences: list[str] = []
 
     terms_a = set(parsed_a.normalized_terms)
     terms_b = set(parsed_b.normalized_terms)
@@ -51,7 +56,7 @@ def compare(parsed_a: ParsedMaterial, parsed_b: ParsedMaterial, rules: RuleSet) 
 
     only_a = terms_a - terms_b
     only_b = terms_b - terms_a
-    _compare_term_sets(only_a, only_b, rules, technical_differences)
+    _compare_term_sets(only_a, only_b, rules, technical_differences, ambiguous_differences)
 
     numbers_a = {_number_key(n) for n in parsed_a.numbers}
     numbers_b = {_number_key(n) for n in parsed_b.numbers}
@@ -99,7 +104,7 @@ def compare(parsed_a: ParsedMaterial, parsed_b: ParsedMaterial, rules: RuleSet) 
 
     similarity = SequenceMatcher(None, parsed_a.normalized_text, parsed_b.normalized_text).ratio()
 
-    ambiguous = _is_ambiguous(only_a, only_b, technical_differences)
+    ambiguous = bool(ambiguous_differences) and not technical_differences
 
     return ComparisonOutcome(
         material_a=parsed_a,
@@ -107,6 +112,7 @@ def compare(parsed_a: ParsedMaterial, parsed_b: ParsedMaterial, rules: RuleSet) 
         equal_elements=equal_elements,
         formatting_differences=sorted(set(formatting_differences)),
         technical_differences=technical_differences,
+        ambiguous_differences=ambiguous_differences,
         order_differs_only=order_differs_only,
         ambiguous=ambiguous,
         textual_similarity=similarity,
@@ -114,12 +120,25 @@ def compare(parsed_a: ParsedMaterial, parsed_b: ParsedMaterial, rules: RuleSet) 
 
 
 def _compare_term_sets(
-    only_a: set[str], only_b: set[str], rules: RuleSet, technical_differences: list[str]
+    only_a: set[str],
+    only_b: set[str],
+    rules: RuleSet,
+    technical_differences: list[str],
+    ambiguous_differences: list[str],
 ) -> None:
     """Para cada termo exclusivo de A, verifica se ele e explicitamente
     incompativel com algum termo exclusivo de B (ex.: DIANTEIRO x
-    TRASEIRO). Termos exclusivos que sobram sem correspondencia tambem
-    sao reportados como diferenca tecnica (ex.: M10 x M12)."""
+    TRASEIRO) — diferenca tecnica certa.
+
+    Termos exclusivos que sobram sem correspondencia sao classificados
+    em dois grupos:
+      - "codigos tecnicos" (ex.: M10, M12 — letras seguidas de numeros):
+        tratados como diferenca tecnica certa, pois codificam uma
+        especificacao objetiva.
+      - demais palavras sem equivalencia conhecida: tratadas como
+        ambiguas — o sistema nao tem regra suficiente para decidir e a
+        revisao humana e recomendada.
+    """
     matched_a: set[str] = set()
     matched_b: set[str] = set()
 
@@ -130,11 +149,21 @@ def _compare_term_sets(
                 matched_a.add(term_a)
                 matched_b.add(term_b)
 
-    remaining_a = sorted(only_a - matched_a)
-    remaining_b = sorted(only_b - matched_b)
-    if remaining_a or remaining_b:
+    remaining_a = only_a - matched_a
+    remaining_b = only_b - matched_b
+
+    code_like_a = sorted(t for t in remaining_a if _CODE_LIKE_TERM.match(t))
+    code_like_b = sorted(t for t in remaining_b if _CODE_LIKE_TERM.match(t))
+    if code_like_a or code_like_b:
         technical_differences.append(
-            f"termos exclusivos: A={remaining_a or '-'} B={remaining_b or '-'}"
+            f"codigos tecnicos exclusivos: A={code_like_a or '-'} B={code_like_b or '-'}"
+        )
+
+    word_like_a = sorted(t for t in remaining_a if not _CODE_LIKE_TERM.match(t))
+    word_like_b = sorted(t for t in remaining_b if not _CODE_LIKE_TERM.match(t))
+    if word_like_a or word_like_b:
+        ambiguous_differences.append(
+            f"termos exclusivos sem equivalencia conhecida: A={word_like_a or '-'} B={word_like_b or '-'}"
         )
 
 
@@ -143,12 +172,3 @@ def _number_key(token_value: str) -> str:
 
     value = numeric_value(token_value)
     return str(int(value)) if value == int(value) else f"{value:g}"
-
-
-def _is_ambiguous(only_a: set[str], only_b: set[str], technical_differences: list[str]) -> bool:
-    """Marca como ambiguo quando ha termos exclusivos de um lado sem
-    contrapartida clara do outro (nem iguais, nem incompativeis
-    conhecidos) — situacao que exige revisao humana."""
-    has_unmatched_terms = bool(only_a) or bool(only_b)
-    has_incompatible = any("incompativeis" in diff for diff in technical_differences)
-    return has_unmatched_terms and not has_incompatible

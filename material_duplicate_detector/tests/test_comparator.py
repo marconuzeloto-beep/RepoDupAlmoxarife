@@ -70,6 +70,13 @@ def test_reordered_terms_reported_as_formatting_difference(rules):
     assert "ordem dos elementos" in outcome.formatting_differences
 
 
+def test_unknown_extra_word_is_ambiguous_not_technical(rules):
+    outcome = _compare("PARAFUSO INOX REFORCADO", "PARAFUSO INOX", rules)
+    assert not outcome.has_technical_difference
+    assert outcome.ambiguous
+    assert outcome.ambiguous_differences
+
+
 def test_identical_text_has_no_differences(rules):
     outcome = _compare("PARAFUSO INOX M10", "PARAFUSO INOX M10", rules)
     assert not outcome.has_technical_difference
