@@ -118,8 +118,15 @@ class ResultsFrame(ttk.Frame):
         )
         if not output_path:
             return
-        export_results_to_excel(self._results, output_path)
-        messagebox.showinfo("Exportar", f"Resultados exportados para:\n{output_path}")
+        sheet_names = export_results_to_excel(self._results, output_path)
+        message = f"{len(self._results)} resultados exportados para:\n{output_path}"
+        if len(sheet_names) > 1:
+            message += (
+                f"\n\nO arquivo tem {len(sheet_names)} planilhas ({', '.join(sheet_names)}) "
+                "porque o numero de pares ultrapassa o limite de linhas de uma unica "
+                "planilha do Excel (1.048.576)."
+            )
+        messagebox.showinfo("Exportar", message)
 
 
 def _summarize(result: ComparisonResult) -> str:
