@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -79,3 +80,44 @@ def test_load_rules_custom_directory(tmp_path):
 def test_load_rules_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_rules(tmp_path)
+
+
+def _write_valid_config(directory) -> None:
+    (directory / "abbreviations.json").write_text(json.dumps({"ABC": "ABCD"}), encoding="utf-8")
+    (directory / "equivalents.json").write_text(json.dumps({"groups": []}), encoding="utf-8")
+    (directory / "critical_terms.json").write_text(
+        json.dumps({"incompatible_groups": []}), encoding="utf-8"
+    )
+    (directory / "protected_symbols.json").write_text(
+        json.dumps({"protected": []}), encoding="utf-8"
+    )
+
+
+def test_load_rules_falls_back_to_meipass_when_default_dir_incomplete(tmp_path, monkeypatch):
+    # Regressao: um executavel PyInstaller gerado sem usar
+    # packaging/app.spec (ex.: "pyinstaller app/main.py" na mao) nao
+    # empacota config/ como dado, e o __file__-based _DEFAULT_CONFIG_DIR
+    # aponta para dentro do bundle onde config/ nao existe. Simula esse
+    # cenario: torna _DEFAULT_CONFIG_DIR "incompleto" e configura
+    # sys._MEIPASS apontando para um diretorio que tem os JSON validos —
+    # load_rules() sem argumentos deve encontrar esse fallback sozinho.
+    meipass_dir = tmp_path / "meipass"
+    meipass_config = meipass_dir / "config"
+    meipass_config.mkdir(parents=True)
+    _write_valid_config(meipass_config)
+
+    incomplete_default_dir = tmp_path / "bundle_sem_config" / "config"
+    monkeypatch.setattr("app.rules.rule_loader._DEFAULT_CONFIG_DIR", incomplete_default_dir)
+    monkeypatch.setattr(sys, "_MEIPASS", str(meipass_dir), raising=False)
+
+    rules = load_rules()
+    assert rules.canonical_term("ABC") == "ABCD"
+
+
+def test_load_rules_raises_clear_error_listing_tried_locations(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.rules.rule_loader._DEFAULT_CONFIG_DIR", tmp_path / "nao_existe")
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+
+    with pytest.raises(FileNotFoundError, match="Locais verificados"):
+        load_rules()

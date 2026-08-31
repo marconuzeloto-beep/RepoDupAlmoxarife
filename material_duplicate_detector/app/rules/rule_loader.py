@@ -9,10 +9,45 @@ permitindo evoluir o dicionario tecnico sem alterar o algoritmo.
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 _DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
+
+_REQUIRED_FILES = (
+    "abbreviations.json",
+    "equivalents.json",
+    "critical_terms.json",
+    "protected_symbols.json",
+)
+
+
+def _candidate_config_dirs() -> list[Path]:
+    """Locais onde os JSON de regras podem estar, em ordem de preferencia.
+
+    Em execucao normal (``python -m app.main``), ``_DEFAULT_CONFIG_DIR``
+    (a pasta ``config/`` do projeto) e suficiente. Em um executavel
+    gerado pelo PyInstaller, ``__file__`` aponta para dentro do bundle
+    (``_internal/`` no modo --onedir, ou uma pasta temporaria
+    ``_MEIxxxxx`` no modo --onefile) e a mesma conta ja costuma
+    funcionar — MAS so se o `.spec` usado para gerar o executavel
+    realmente empacotou ``config/`` como dado (``datas=...`` em
+    ``packaging/app.spec``). Se o build foi feito com um comando
+    avulso do PyInstaller (sem usar essa spec), a pasta config nao
+    existe no bundle, e por isso alguns locais extras sao tentados
+    antes de desistir.
+    """
+    candidates = [_DEFAULT_CONFIG_DIR]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / "config")
+    if getattr(sys, "frozen", False):
+        # Pasta onde o .exe esta (fora de _internal/_MEIxxxxx) — cobre o
+        # caso de alguem copiar a pasta config/ manualmente para o lado
+        # do executavel como contorno.
+        candidates.append(Path(sys.executable).resolve().parent / "config")
+    return candidates
 
 
 @dataclass(frozen=True)
@@ -45,9 +80,12 @@ class RuleSet:
 
 def load_rules(config_dir: str | Path | None = None) -> RuleSet:
     """Carrega abbreviations.json, equivalents.json, critical_terms.json e
-    protected_symbols.json de ``config_dir`` (padrao: pasta config/ do
-    projeto) e retorna um ``RuleSet`` pronto para consulta."""
-    directory = Path(config_dir) if config_dir is not None else _DEFAULT_CONFIG_DIR
+    protected_symbols.json de ``config_dir`` (padrao: tenta a pasta
+    config/ do projeto e, se estiver rodando de um executavel
+    PyInstaller, alguns locais alternativos dentro do bundle — ver
+    ``_candidate_config_dirs``) e retorna um ``RuleSet`` pronto para
+    consulta."""
+    directory = Path(config_dir) if config_dir is not None else _find_config_dir()
 
     abbreviations = _load_json(directory / "abbreviations.json")
     equivalents = _load_json(directory / "equivalents.json")
@@ -82,6 +120,23 @@ def load_rules(config_dir: str | Path | None = None) -> RuleSet:
         abbreviation_to_canonical=abbreviation_to_canonical,
         incompatible_groups=incompatible_groups,
         protected_symbols=protected_symbols,
+    )
+
+
+def _find_config_dir() -> Path:
+    candidates = _candidate_config_dirs()
+    for candidate in candidates:
+        if all((candidate / name).exists() for name in _REQUIRED_FILES):
+            return candidate
+
+    tried = "\n".join(f"  - {c}" for c in candidates)
+    raise FileNotFoundError(
+        "Nao foi possivel encontrar a pasta config/ com os arquivos de "
+        f"regras ({', '.join(_REQUIRED_FILES)}). Locais verificados:\n{tried}\n\n"
+        "Se este e um executavel gerado com PyInstaller, gere-o com "
+        "'pyinstaller packaging/app.spec' (nao com um comando avulso do "
+        "PyInstaller) — so essa spec inclui a pasta config/ como dado "
+        "empacotado."
     )
 
 
