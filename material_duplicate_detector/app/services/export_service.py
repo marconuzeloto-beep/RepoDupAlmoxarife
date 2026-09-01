@@ -25,6 +25,11 @@ _COLUMNS = [
     "Codigo B",
     "Texto A",
     "Texto B",
+    # Puramente informativas (contexto): NUNCA entram no calculo de
+    # Confianca/Classificacao, que considera so os campos de "Dados
+    # Basicos" (Texto A/Texto B) acima. Ver Material.short_description.
+    "Descricao Curta A",
+    "Descricao Curta B",
     "Classificacao",
     "Confianca",
     "Elementos Tecnicos Iguais",
@@ -128,6 +133,8 @@ def _result_to_row(r: ComparisonResult) -> list:
         r.code_b,
         _truncate_for_excel(r.text_a),
         _truncate_for_excel(r.text_b),
+        _truncate_for_excel(r.short_description_a),
+        _truncate_for_excel(r.short_description_b),
         r.classification,
         r.confidence,
         _truncate_for_excel("; ".join(r.equal_elements)),

@@ -31,3 +31,9 @@ class ComparisonResult:
     ambiguous_differences: list[str] = field(default_factory=list)
     review_status: ReviewStatus = "PENDENTE"
     observation: str = ""
+    # Puramente informativo (coluna "Descricao Curta" da planilha de
+    # origem, quando presente) — NUNCA usado no calculo de
+    # classification/confidence, so carregado para dar contexto ao
+    # usuario na revisao/exportacao (ver Material.short_description).
+    short_description_a: str = ""
+    short_description_b: str = ""

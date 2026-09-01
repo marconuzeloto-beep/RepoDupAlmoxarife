@@ -202,7 +202,11 @@ class _DetailDialog(tk.Toplevel):
         frame.pack(fill="both", expand=True)
 
         self._add_section(frame, f"MATERIAL A — Codigo: {result.code_a}", result.text_a)
+        if result.short_description_a:
+            self._add_section(frame, "Descricao curta (contexto, A)", result.short_description_a)
         self._add_section(frame, f"MATERIAL B — Codigo: {result.code_b}", result.text_b)
+        if result.short_description_b:
+            self._add_section(frame, "Descricao curta (contexto, B)", result.short_description_b)
         self._add_section(frame, "RESULTADO", result.classification)
         self._add_list_section(frame, "ELEMENTOS TECNICOS IGUAIS", result.equal_elements)
         self._add_list_section(frame, "DIFERENCAS DE FORMATACAO", result.formatting_differences)

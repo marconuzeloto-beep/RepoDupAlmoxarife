@@ -64,3 +64,71 @@ def test_build_comparison_result_contains_explanations(rules):
     assert result.technical_differences == []
     assert result.review_status == "PENDENTE"
     assert 0.0 <= result.confidence <= 1.0
+
+
+def test_build_comparison_result_carries_short_description_for_context(rules):
+    parsed_a = parse_material(
+        Material(
+            row_index=0,
+            code="A",
+            analysis_text="PARAFUSO 20 CM X 1/2 MM",
+            short_description="Parafuso sextavado zincado",
+        ),
+        rules,
+    )
+    parsed_b = parse_material(
+        Material(
+            row_index=1,
+            code="B",
+            analysis_text="PARAFUSO 20CMX1/2MM",
+            short_description="Parafuso p/ estrutura metalica",
+        ),
+        rules,
+    )
+    outcome = compare(parsed_a, parsed_b, rules)
+    result = build_comparison_result(outcome)
+
+    assert result.short_description_a == "Parafuso sextavado zincado"
+    assert result.short_description_b == "Parafuso p/ estrutura metalica"
+
+
+def test_short_description_never_affects_classification_or_confidence(rules):
+    # Requisito obrigatorio: a Descricao Curta e so contexto/visualizacao
+    # — duas linhas com o MESMO "Texto Dados Basicos" mas descricoes
+    # curtas completamente diferentes devem dar exatamente a mesma
+    # classificacao e confianca de quando as descricoes sao iguais (ou
+    # ausentes).
+    def _result_with_short_descriptions(short_a: str, short_b: str):
+        parsed_a = parse_material(
+            Material(
+                row_index=0, code="A",
+                analysis_text="PARAFUSO 20 CM X 1/2 MM",
+                short_description=short_a,
+            ),
+            rules,
+        )
+        parsed_b = parse_material(
+            Material(
+                row_index=1, code="B",
+                analysis_text="PARAFUSO 20CMX1/2MM",
+                short_description=short_b,
+            ),
+            rules,
+        )
+        outcome = compare(parsed_a, parsed_b, rules)
+        return build_comparison_result(outcome)
+
+    baseline = _result_with_short_descriptions("", "")
+    same_descriptions = _result_with_short_descriptions("Item X", "Item X")
+    wildly_different = _result_with_short_descriptions(
+        "Parafuso sextavado inox para fixacao estrutural pesada",
+        "PCA-9928 / uso interno / lote antigo (obsoleto)",
+    )
+
+    for other in (same_descriptions, wildly_different):
+        assert other.classification == baseline.classification
+        assert other.confidence == baseline.confidence
+        assert other.equal_elements == baseline.equal_elements
+        assert other.formatting_differences == baseline.formatting_differences
+        assert other.technical_differences == baseline.technical_differences
+        assert other.ambiguous_differences == baseline.ambiguous_differences

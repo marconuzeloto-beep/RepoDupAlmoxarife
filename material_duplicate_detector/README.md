@@ -452,3 +452,26 @@ ter menos de 70% de similaridade textual e ficar de fora do arquivo
 filtrado. Se isso for um problema no seu uso, baixe o limite para 0%
 na tela antes de exportar (ou passe `min_confidence=None` chamando o
 serviço diretamente) para conferir todos os pares gerados.
+
+## Coluna "Descrição Curta" (contexto, não entra no cálculo)
+
+Se a planilha de origem tiver uma coluna chamada "Descrição Curta" ou
+"Descricao Curta" (detecção tolerante a acentuação/caixa/espaços — ver
+`excel_service.find_short_description_column`), ela é carregada
+automaticamente em `Material.short_description` e aparece no arquivo
+final como duas colunas, **"Descricao Curta A"** e **"Descricao Curta
+B"**, uma para cada material do par. Também aparece no diálogo de
+detalhe do par na tela de Resultados, quando presente.
+
+Esse campo é **puramente informativo**: existe porque duas linhas
+podem ter "Texto Dados Básicos" idênticos mas descrições curtas
+diferentes, e ajuda o revisor a entender o contexto de cada item. Ele
+**nunca** entra em `normalizer`, `tokenizer`, `technical_parser`,
+`signature_builder`, `candidate_generator`, `comparator` ou
+`classifier` — o cálculo de similaridade/confiança e a decisão de
+classificação consideram exclusivamente o campo de "Dados Básicos"
+(`analysis_text`). `short_description` só é lido, no fim do pipeline,
+por `classifier.build_comparison_result` para popular o resultado
+final — depois que classificação e confiança já foram decididas.
+Se a coluna não existir na planilha, o campo fica vazio e nada muda no
+restante do fluxo.

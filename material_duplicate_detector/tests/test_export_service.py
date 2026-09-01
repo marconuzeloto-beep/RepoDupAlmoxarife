@@ -60,6 +60,27 @@ def test_export_empty_results(tmp_path):
     assert df.empty
 
 
+def test_export_includes_short_description_columns_for_context_only(tmp_path):
+    results = [
+        ComparisonResult(
+            code_a="1", code_b="2", text_a="PARAFUSO A", text_b="PARAFUSO B",
+            classification="DUPLICADO_CONFIRMADO", confidence=0.95,
+            short_description_a="Parafuso sextavado zincado",
+            short_description_b="Parafuso p/ estrutura metalica",
+        ),
+    ]
+    output_path = tmp_path / "com_descricao.xlsx"
+
+    summary = export_results_to_excel(results, output_path)
+    assert summary.exported_count == 1
+
+    df = pd.read_excel(output_path, engine="openpyxl", dtype=str)
+    assert "Descricao Curta A" in df.columns
+    assert "Descricao Curta B" in df.columns
+    assert df.loc[0, "Descricao Curta A"] == "Parafuso sextavado zincado"
+    assert df.loc[0, "Descricao Curta B"] == "Parafuso p/ estrutura metalica"
+
+
 def test_export_filters_out_results_below_70_percent_confidence_by_default(tmp_path):
     # Requisito obrigatorio: o arquivo final so pode conter pares com
     # confianca >= 70%. Por padrao (sem passar min_confidence), pares

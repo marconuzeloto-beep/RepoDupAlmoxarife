@@ -45,4 +45,10 @@ def build_comparison_result(outcome: ComparisonOutcome) -> ComparisonResult:
         formatting_differences=outcome.formatting_differences,
         technical_differences=outcome.technical_differences,
         ambiguous_differences=outcome.ambiguous_differences,
+        # Copiados so para contexto/exportacao — `outcome` (produzido por
+        # `compare()`) nunca leva em conta short_description em nenhum
+        # calculo; ela e lida diretamente do Material aqui, depois de
+        # toda a comparacao/classificacao ja estarem decididas.
+        short_description_a=outcome.material_a.material.short_description,
+        short_description_b=outcome.material_b.material.short_description,
     )

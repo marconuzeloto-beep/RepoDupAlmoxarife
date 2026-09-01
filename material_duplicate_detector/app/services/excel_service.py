@@ -6,6 +6,7 @@ Responsavel apenas por acesso a arquivo/planilha e conversao para
 
 from __future__ import annotations
 
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -19,6 +20,31 @@ class ExcelFileError(Exception):
 
 class ColumnNotFoundError(Exception):
     """Coluna solicitada nao existe na planilha."""
+
+
+# Nomes aceitos para a coluna de descricao curta (puramente informativa
+# — ver Material.short_description). Comparados de forma tolerante a
+# acentuacao, caixa e espacos via `_normalize_column_name`, entao
+# "Descrição Curta", "Descricao Curta", "descricao   curta" etc. todos
+# batem com "DESCRICAO CURTA" abaixo.
+_SHORT_DESCRIPTION_COLUMN_NAMES = {"DESCRICAO CURTA", "DESC CURTA"}
+
+
+def _normalize_column_name(name: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", str(name))
+    without_accents = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return " ".join(without_accents.upper().split())
+
+
+def find_short_description_column(columns: list[str]) -> str | None:
+    """Localiza a coluna de descricao curta entre ``columns``, tolerando
+    variacoes de acentuacao/caixa/espacos (ex.: "Descrição Curta" ou
+    "Descricao Curta"). Retorna ``None`` se nenhuma coluna bater —
+    a coluna e opcional, sua ausencia nao impede a analise."""
+    for column in columns:
+        if _normalize_column_name(column) in _SHORT_DESCRIPTION_COLUMN_NAMES:
+            return column
+    return None
 
 
 def list_sheet_names(file_path: str | Path) -> list[str]:
@@ -46,12 +72,20 @@ def load_materials(
     sheet_name: str,
     code_column: str,
     analysis_column: str,
+    short_description_column: str | None = None,
 ) -> list[Material]:
     """Le a planilha e converte cada linha em um ``Material``.
 
     Linhas com o texto de analise vazio sao ignoradas (nao ha o que
     comparar). Codigo vazio e mantido como string vazia — a decisao de
     como tratar isso fica a cargo das camadas superiores.
+
+    ``short_description_column`` e opcional: se omitido, a coluna
+    "Descricao Curta" (ou variacoes de acentuacao/caixa — ver
+    ``find_short_description_column``) e detectada automaticamente
+    quando presente na planilha. Esse campo e puramente informativo
+    (ver ``Material.short_description``): nunca entra em
+    ``analysis_text`` nem em nenhum calculo de similaridade/confianca.
     """
     df = _read_sheet(file_path, sheet_name)
 
@@ -62,18 +96,33 @@ def load_materials(
                 f"{list(df.columns)}"
             )
 
+    if short_description_column is not None and short_description_column not in df.columns:
+        raise ColumnNotFoundError(
+            f"Coluna '{short_description_column}' nao encontrada. Colunas disponiveis: "
+            f"{list(df.columns)}"
+        )
+    resolved_short_description_column = short_description_column or find_short_description_column(
+        list(df.columns)
+    )
+
     materials: list[Material] = []
     for row_index, row in df.iterrows():
         analysis_text = _cell_to_text(row[analysis_column])
         if not analysis_text:
             continue
         code = _cell_to_text(row[code_column])
+        short_description = (
+            _cell_to_text(row[resolved_short_description_column])
+            if resolved_short_description_column is not None
+            else ""
+        )
         raw_fields = {str(col): _cell_to_text(row[col]) for col in df.columns}
         materials.append(
             Material(
                 row_index=int(row_index),
                 code=code,
                 analysis_text=analysis_text,
+                short_description=short_description,
                 raw_fields=raw_fields,
             )
         )
