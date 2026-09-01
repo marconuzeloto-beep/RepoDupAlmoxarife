@@ -5,10 +5,15 @@ e serializada e descartada da memoria assim que e escrita, em vez de
 manter todas as celulas da planilha como objetos Python (o que e o que
 ``pandas.DataFrame.to_excel``/``openpyxl`` no modo normal fazem, e o
 que causava ``MemoryError`` ao exportar centenas de milhares de pares).
+
+Aplica tambem o filtro de confianca minima (``min_confidence``, padrao
+0.70 = 70%) exigido para o arquivo final: pares abaixo do limite nunca
+chegam a ser escritos.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -35,19 +40,53 @@ _COLUMNS = [
 # sao divididos em varias planilhas dentro do mesmo arquivo.
 _EXCEL_MAX_ROWS_PER_SHEET = 1_048_576
 
+# Limite real do Excel para o conteudo de uma unica celula de texto.
+# Uma celula acima disso faz o proprio openpyxl levantar erro ao salvar
+# (outra forma de "perda"/falha silenciosa em textos muito longos,
+# incomum mas possivel em campos de observacao/diferencas extensos).
+_EXCEL_MAX_CELL_LENGTH = 32_767
+
+# Filtro obrigatorio do arquivo final: so pares com confianca >= 70%.
+DEFAULT_MIN_CONFIDENCE = 0.70
+
+
+@dataclass(frozen=True)
+class ExportSummary:
+    sheet_names: list[str]
+    total_input: int
+    exported_count: int
+    filtered_out_by_confidence: int
+
 
 def export_results_to_excel(
     results: list[ComparisonResult],
     output_path: str | Path,
+    min_confidence: float | None = DEFAULT_MIN_CONFIDENCE,
     max_rows_per_sheet: int = _EXCEL_MAX_ROWS_PER_SHEET,
-) -> list[str]:
+) -> ExportSummary:
     """Exporta ``results`` para ``output_path`` em modo streaming.
 
-    Se ``results`` tiver mais linhas do que uma planilha do Excel
-    suporta, os dados sao divididos automaticamente em varias planilhas
-    ("Resultados", "Resultados_2", ...) dentro do mesmo arquivo, em vez
-    de falhar. Retorna a lista de nomes de planilhas criadas.
+    - Filtra por ``min_confidence`` (padrao 0.70 = 70%) antes de
+      escrever: pares abaixo do limite nao entram no arquivo. Passe
+      ``None`` para exportar tudo sem esse filtro.
+    - Se o total apos o filtro ultrapassar o limite de linhas de uma
+      planilha do Excel, os dados sao divididos automaticamente em
+      varias planilhas ("Resultados", "Resultados_2", ...) dentro do
+      mesmo arquivo, em vez de falhar.
+    - Celulas de texto muito longas (> 32.767 caracteres, o limite do
+      proprio Excel) sao truncadas com um aviso, em vez de derrubar a
+      exportacao inteira por causa de um unico campo extenso.
+
+    Retorna um ``ExportSummary`` com quantos pares entraram, quantos
+    foram cortados pelo filtro de confianca e em quais planilhas.
     """
+    total_input = len(results) if hasattr(results, "__len__") else None
+
+    if min_confidence is not None:
+        filtered_results = (r for r in results if r.confidence >= min_confidence)
+    else:
+        filtered_results = iter(results)
+
     max_data_rows = max(1, max_rows_per_sheet - 1)  # a linha 1 e o cabecalho
 
     workbook = Workbook(write_only=True)
@@ -63,29 +102,45 @@ def export_results_to_excel(
 
     current_sheet = start_sheet()
     rows_in_current_sheet = 0
-    for result in results:
+    exported_count = 0
+    for result in filtered_results:
         if rows_in_current_sheet >= max_data_rows:
             current_sheet = start_sheet()
             rows_in_current_sheet = 0
         current_sheet.append(_result_to_row(result))
         rows_in_current_sheet += 1
+        exported_count += 1
 
     workbook.save(output_path)
-    return sheet_names
+
+    filtered_out = (total_input - exported_count) if total_input is not None else 0
+    return ExportSummary(
+        sheet_names=sheet_names,
+        total_input=total_input if total_input is not None else exported_count,
+        exported_count=exported_count,
+        filtered_out_by_confidence=filtered_out,
+    )
 
 
 def _result_to_row(r: ComparisonResult) -> list:
     return [
         r.code_a,
         r.code_b,
-        r.text_a,
-        r.text_b,
+        _truncate_for_excel(r.text_a),
+        _truncate_for_excel(r.text_b),
         r.classification,
         r.confidence,
-        "; ".join(r.equal_elements),
-        "; ".join(r.formatting_differences),
-        "; ".join(r.technical_differences),
-        "; ".join(r.ambiguous_differences),
+        _truncate_for_excel("; ".join(r.equal_elements)),
+        _truncate_for_excel("; ".join(r.formatting_differences)),
+        _truncate_for_excel("; ".join(r.technical_differences)),
+        _truncate_for_excel("; ".join(r.ambiguous_differences)),
         r.review_status,
-        r.observation,
+        _truncate_for_excel(r.observation),
     ]
+
+
+def _truncate_for_excel(value: str) -> str:
+    if len(value) <= _EXCEL_MAX_CELL_LENGTH:
+        return value
+    suffix = " [...TRUNCADO...]"
+    return value[: _EXCEL_MAX_CELL_LENGTH - len(suffix)] + suffix

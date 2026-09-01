@@ -25,7 +25,7 @@ class InvertedIndex:
     def __init__(
         self,
         max_document_frequency_ratio: float = 0.05,
-        min_absolute_threshold: int = 20,
+        min_absolute_threshold: int = 300,
     ) -> None:
         self._postings: dict[str, set[int]] = defaultdict(set)
         self._max_document_frequency_ratio = max_document_frequency_ratio

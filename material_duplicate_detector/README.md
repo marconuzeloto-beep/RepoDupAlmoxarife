@@ -416,16 +416,39 @@ faltou algo nessa cópia. Checklist, na ordem mais provável:
   mas o `.exe` real, o instalador Inno Setup e a execução em um Windows
   sem Python instalado (o requisito final do projeto) precisam ser
   gerados e testados em uma máquina Windows.
-- **Índices priorizam eficiência sobre recall total em casos extremos.**
-  Para evitar explosão combinatória, `InvertedIndex` e `SignatureIndex`
-  ignoram termos/assinaturas presentes em mais de ~5% dos materiais
-  (mínimo 20). Duplicados exatos (mesmo texto normalizado) sempre são
-  encontrados via um agrupamento dedicado sem esse limite (Sprint 10),
-  mas duplicados quase-idênticos (ex.: só a formatação difere) que
-  dependam apenas de termos muito genéricos em bases muito grandes e
-  homogêneas podem, em tese, escapar dessa varredura. Não foi observado
-  em nenhum teste realizado (até 20.000 registros), mas é uma limitação
-  arquitetural a ter em mente.
+- **Índices de bloqueio só entram em cena acima de `EXHAUSTIVE_THRESHOLD`
+  (4.000 materiais).** Até esse tamanho, `candidate_generator` gera
+  TODOS os pares (i, j) diretamente — nenhum indice de bloqueio é
+  usado, então não há nenhuma chance de um duplicado real "sumir" por
+  causa de um corte de frequência. Acima de 4.000 materiais,
+  `InvertedIndex`/`SignatureIndex` entram em ação com um limite mais
+  generoso que antes (ignoram termos/assinaturas presentes em mais de
+  ~5% dos materiais, mínimo 300 — antes era 20) para reduzir ainda mais
+  o risco de perda nessa faixa, com duplicados exatos sempre cobertos
+  por um agrupamento dedicado sem limite algum (Sprint 10). Continua
+  sendo, em tese, uma limitação arquitetural para bases muito grandes
+  (> 4.000 linhas) e extremamente homogêneas, mas não é mais um risco
+  para o caso de uso típico (catálogos de alguns milhares de itens).
 - **Não há tela de configuração de regras (`settings_view`) nem edição
   de abreviações/equivalências pela interface.** As regras (Sprint 4)
   só podem ser editadas diretamente nos arquivos `config/*.json`.
+
+## Filtro de confiança mínima na exportação (70%)
+
+A tela de Resultados tem um campo "Confiança minima (%)" (padrão 70%)
+que filtra a tabela e o arquivo exportado juntos — o que você vê na
+tela é exatamente o que sai no Excel. `export_service.export_results_to_excel`
+também aplica esse filtro por padrão (`min_confidence=0.70`) quando
+chamado fora da GUI.
+
+Importante: `confidence` é a similaridade textual bruta (um sinal
+auxiliar), não o critério que decide a classificação — por desenho, a
+classificação (`DUPLICADO_CONFIRMADO`/`PROVAVEL_DUPLICADO`/
+`SEMELHANTE_DIFERENTE`) nunca depende só de percentual (ver seção
+"Estratégia de Comparação Técnica"). Isso significa que um par
+tecnicamente confirmado como duplicado (sem nenhuma diferença técnica)
+mas com textos muito reordenados ou reescritos pode, em casos raros,
+ter menos de 70% de similaridade textual e ficar de fora do arquivo
+filtrado. Se isso for um problema no seu uso, baixe o limite para 0%
+na tela antes de exportar (ou passe `min_confidence=None` chamando o
+serviço diretamente) para conferir todos os pares gerados.

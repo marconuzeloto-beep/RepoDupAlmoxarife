@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from app.models.comparison_result import ComparisonResult
-from app.services.export_service import export_results_to_excel
+from app.services.export_service import DEFAULT_MIN_CONFIDENCE, export_results_to_excel
 
 _ALL_CLASSIFICATIONS = "TODAS"
 _REVIEW_STATUSES = ["PENDENTE", "APROVADO", "REJEITADO"]
@@ -45,6 +45,14 @@ class ResultsFrame(ttk.Frame):
         search_entry.pack(side="left", padx=4)
         search_entry.bind("<KeyRelease>", lambda _e: self._refresh())
 
+        ttk.Label(toolbar, text="Confianca minima (%):").pack(side="left", padx=(12, 0))
+        # Padrao 70% — mesmo limite exigido no arquivo exportado, para a
+        # tabela e a exportacao mostrarem sempre o mesmo conjunto.
+        self._min_confidence_var = tk.StringVar(value=str(int(DEFAULT_MIN_CONFIDENCE * 100)))
+        min_confidence_entry = ttk.Entry(toolbar, textvariable=self._min_confidence_var, width=5)
+        min_confidence_entry.pack(side="left", padx=4)
+        min_confidence_entry.bind("<KeyRelease>", lambda _e: self._refresh())
+
         ttk.Button(toolbar, text="Exportar para Excel", command=self._export).pack(side="right")
 
         columns = ("code_a", "code_b", "classification", "confidence", "summary")
@@ -74,10 +82,13 @@ class ResultsFrame(ttk.Frame):
         self._tree.delete(*self._tree.get_children())
         classification_filter = self._classification_var.get()
         search_text = self._search_var.get().strip().upper()
+        min_confidence = self._parsed_min_confidence()
 
         self._visible_indices = []
         for index, result in enumerate(self._results):
             if classification_filter != _ALL_CLASSIFICATIONS and result.classification != classification_filter:
+                continue
+            if result.confidence < min_confidence:
                 continue
             haystack = f"{result.code_a} {result.code_b} {result.text_a} {result.text_b}".upper()
             if search_text and search_text not in haystack:
@@ -100,6 +111,15 @@ class ResultsFrame(ttk.Frame):
             f"{len(self._visible_indices)} de {len(self._results)} pares exibidos"
         )
 
+    def _parsed_min_confidence(self) -> float:
+        """Le o campo 'Confianca minima (%)', tolerante a texto invalido
+        (ex.: campo vazio enquanto o usuario ainda esta digitando)."""
+        raw = self._min_confidence_var.get().strip().replace(",", ".")
+        try:
+            return max(0.0, min(100.0, float(raw))) / 100.0
+        except ValueError:
+            return 0.0
+
     def _open_detail(self) -> None:
         selection = self._tree.selection()
         if not selection:
@@ -113,21 +133,22 @@ class ResultsFrame(ttk.Frame):
             return
 
         # Exporta apenas os resultados atualmente visiveis (respeitando o
-        # filtro de classificacao e a busca), nao todos os pares — assim
-        # o usuario controla o tamanho do arquivo filtrando antes de
-        # exportar (ex.: so DUPLICADO_CONFIRMADO/PROVAVEL_DUPLICADO).
+        # filtro de classificacao, a confianca minima e a busca), nao
+        # todos os pares — assim a tabela e o arquivo exportado sempre
+        # mostram exatamente o mesmo conjunto.
         results_to_export = [self._results[i] for i in self._visible_indices]
         if not results_to_export:
-            messagebox.showinfo("Exportar", "Nenhum resultado visivel com o filtro/busca atuais.")
+            messagebox.showinfo(
+                "Exportar", "Nenhum resultado visivel com os filtros/busca atuais."
+            )
             return
 
         if len(results_to_export) > 200_000:
             proceed = messagebox.askyesno(
                 "Exportar muitos resultados",
                 f"Ha {len(results_to_export)} pares visiveis — um volume muito grande para "
-                "revisao manual em Excel. Considere filtrar por Classificacao (ex.: apenas "
-                "DUPLICADO_CONFIRMADO e PROVAVEL_DUPLICADO) antes de exportar.\n\n"
-                "Deseja exportar mesmo assim?",
+                "revisao manual em Excel. Considere aumentar a confianca minima ou filtrar "
+                "por Classificacao antes de exportar.\n\nDeseja exportar mesmo assim?",
             )
             if not proceed:
                 return
@@ -139,18 +160,23 @@ class ResultsFrame(ttk.Frame):
         )
         if not output_path:
             return
-        sheet_names = export_results_to_excel(results_to_export, output_path)
-        message = f"{len(results_to_export)} resultados exportados para:\n{output_path}"
+
+        # min_confidence=None: a tabela ja aplicou o filtro de confianca
+        # (self._visible_indices) de acordo com o campo da tela; nao
+        # faz sentido o export_service filtrar de novo com o padrao de
+        # 70% fixo, ignorando o valor que o usuario escolheu aqui.
+        summary = export_results_to_excel(results_to_export, output_path, min_confidence=None)
+        message = f"{summary.exported_count} resultados exportados para:\n{output_path}"
         if len(results_to_export) < len(self._results):
             message += (
-                f"\n\n(Filtro/busca aplicados: {len(self._results) - len(results_to_export)} "
+                f"\n\n(Filtros aplicados: {len(self._results) - len(results_to_export)} "
                 "pares nao visiveis nao foram exportados.)"
             )
-        if len(sheet_names) > 1:
+        if len(summary.sheet_names) > 1:
             message += (
-                f"\n\nO arquivo tem {len(sheet_names)} planilhas ({', '.join(sheet_names)}) "
-                "porque o numero de pares ultrapassa o limite de linhas de uma unica "
-                "planilha do Excel (1.048.576)."
+                f"\n\nO arquivo tem {len(summary.sheet_names)} planilhas "
+                f"({', '.join(summary.sheet_names)}) porque o numero de pares ultrapassa o "
+                "limite de linhas de uma unica planilha do Excel (1.048.576)."
             )
         messagebox.showinfo("Exportar", message)
 

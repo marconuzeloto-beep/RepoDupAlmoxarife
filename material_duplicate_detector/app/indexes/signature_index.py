@@ -23,7 +23,7 @@ class SignatureIndex:
     def __init__(
         self,
         max_group_size_ratio: float = 0.05,
-        min_absolute_threshold: int = 20,
+        min_absolute_threshold: int = 300,
     ) -> None:
         self._by_unordered_signature: dict[frozenset[str], set[int]] = defaultdict(set)
         self._by_numeric_signature: dict[str, set[int]] = defaultdict(set)
